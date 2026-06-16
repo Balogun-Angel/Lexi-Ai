@@ -1,0 +1,17 @@
+# LexiAI — CI/CD Pipeline
+# Placeholder — workflow steps to be defined.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "CI pipeline to be configured"
