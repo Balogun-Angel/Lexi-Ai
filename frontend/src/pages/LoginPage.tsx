@@ -1,8 +1,10 @@
-import { Link } from 'react-router-dom'
+import { useState, type FormEvent } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Card } from '../components/ui/Card'
+import { useAuth } from '../context/AuthContext'
 
 function AuthIllustration() {
   return (
@@ -42,6 +44,28 @@ function AuthIllustration() {
 }
 
 export function LoginPage() {
+  const navigate = useNavigate()
+  const { login } = useAuth()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      await login({ email, password })
+      navigate('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-surface">
       <AuthIllustration />
@@ -54,15 +78,35 @@ export function LoginPage() {
 
           <h1 className="mb-8 text-center text-2xl font-bold text-text-primary">Welcome Back</h1>
 
-          <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-            <Input label="Email" type="email" placeholder="you@example.com" defaultValue="angel@example.com" />
-            <Input label="Password" type="password" placeholder="••••••••" />
+          <form className="space-y-5" onSubmit={handleSubmit}>
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                {error}
+              </div>
+            )}
 
-            <Link to="/dashboard">
-              <Button fullWidth size="lg">
-                Continue
-              </Button>
-            </Link>
+            <Input
+              label="Email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={isLoading}
+            />
+            <Input
+              label="Password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={isLoading}
+            />
+
+            <Button fullWidth size="lg" type="submit" disabled={isLoading}>
+              {isLoading ? 'Signing in...' : 'Continue'}
+            </Button>
           </form>
 
           <div className="my-6 flex items-center gap-4">
@@ -71,7 +115,7 @@ export function LoginPage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button fullWidth variant="google" size="lg">
+          <Button fullWidth variant="google" size="lg" disabled={isLoading}>
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path
                 fill="currentColor"

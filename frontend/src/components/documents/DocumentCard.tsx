@@ -3,16 +3,39 @@ import { Link } from 'react-router-dom'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/Badge'
-import type { Document } from '../../data/mockData'
+import type { DocumentDisplay } from '../../types/document'
 import { cn } from '../../lib/utils'
 
 interface DocumentCardProps {
-  document: Document
+  document: DocumentDisplay
   className?: string
 }
 
 export function DocumentCard({ document, className }: DocumentCardProps) {
-  const href = document.status === 'processing' ? '/processing' : '/chat'
+  const href =
+    document.status === 'processing'
+      ? '/processing'
+      : document.status === 'ready'
+        ? '/chat'
+        : null
+
+  const buttonLabel =
+    document.status === 'processing'
+      ? 'View Progress'
+      : document.status === 'ready'
+        ? 'Open'
+        : 'Uploaded'
+
+  const button = (
+    <Button
+      fullWidth
+      size="sm"
+      variant={document.status === 'ready' ? 'primary' : 'outline'}
+      disabled={document.status === 'uploaded'}
+    >
+      {buttonLabel}
+    </Button>
+  )
 
   return (
     <Card padding="sm" className={cn('flex flex-col', className)}>
@@ -30,15 +53,13 @@ export function DocumentCard({ document, className }: DocumentCardProps) {
         <Badge status={document.status} />
       </div>
 
-      <Link to={href} className="mt-auto">
-        <Button
-          fullWidth
-          size="sm"
-          variant={document.status === 'ready' ? 'primary' : 'outline'}
-        >
-          {document.status === 'processing' ? 'View Progress' : 'Open'}
-        </Button>
-      </Link>
+      {href ? (
+        <Link to={href} className="mt-auto">
+          {button}
+        </Link>
+      ) : (
+        <div className="mt-auto">{button}</div>
+      )}
     </Card>
   )
 }

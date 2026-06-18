@@ -1,12 +1,14 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   FileText,
+  LogOut,
   MessageSquare,
   Settings,
   User,
 } from 'lucide-react'
 import { Logo } from '../ui/Logo'
+import { useAuth } from '../../context/AuthContext'
 import { cn } from '../../lib/utils'
 
 const mainNavItems = [
@@ -26,6 +28,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ className }: SidebarProps) {
+  const navigate = useNavigate()
+  const { logout } = useAuth()
+
+  function handleLogout() {
+    logout()
+    navigate('/login')
+  }
+
   return (
     <aside
       className={cn(
@@ -68,6 +78,14 @@ export function Sidebar({ className }: SidebarProps) {
             {label}
           </NavLink>
         ))}
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          Logout
+        </button>
       </nav>
     </aside>
   )
