@@ -7,9 +7,18 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
 from app.models.user import User
-from app.schemas.document import DocumentResponse
+from app.schemas.document import (
+    DocumentChunkListResponse,
+    DocumentChunkResponse,
+    DocumentResponse,
+    ProcessAllResponse,
+)
+from app.services.processing import DocumentNotFoundError, process_document_by_id
 from app.services.storage import delete_pdf_file, save_pdf_upload, validate_pdf_upload
+
+REPROCESSABLE_STATUSES = ("uploaded", "failed")
 
 router = APIRouter()
 
@@ -52,7 +61,37 @@ async def upload_document(
     db.add(document)
     db.commit()
     db.refresh(document)
+
+    process_document_by_id(document.id, db)
+    db.refresh(document)
     return DocumentResponse.model_validate(document)
+
+
+@router.post("/process-all", response_model=ProcessAllResponse)
+def process_all_documents(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProcessAllResponse:
+    documents = db.scalars(
+        select(Document)
+        .where(
+            Document.user_id == current_user.id,
+            Document.status.in_(REPROCESSABLE_STATUSES),
+        )
+        .order_by(Document.created_at.asc())
+    ).all()
+
+    processed = 0
+    failed = 0
+
+    for document in documents:
+        result = process_document_by_id(document.id, db)
+        if result == "processed":
+            processed += 1
+        elif result == "failed":
+            failed += 1
+
+    return ProcessAllResponse(processed=processed, failed=failed)
 
 
 @router.get("", response_model=list[DocumentResponse])
@@ -66,6 +105,45 @@ def list_documents(
         .order_by(Document.created_at.desc())
     ).all()
     return [DocumentResponse.model_validate(doc) for doc in documents]
+
+
+@router.get("/{document_id}/chunks", response_model=DocumentChunkListResponse)
+def list_document_chunks(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DocumentChunkListResponse:
+    document = get_user_document(document_id, current_user, db)
+    chunks = db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document.id)
+        .order_by(DocumentChunk.chunk_index.asc())
+    ).all()
+
+    return DocumentChunkListResponse(
+        document_id=document.id,
+        chunks=[DocumentChunkResponse.model_validate(chunk) for chunk in chunks],
+    )
+
+
+@router.post("/{document_id}/process", response_model=DocumentResponse)
+def process_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DocumentResponse:
+    get_user_document(document_id, current_user, db)
+
+    try:
+        process_document_by_id(document_id, db)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        ) from exc
+
+    document = get_user_document(document_id, current_user, db)
+    return DocumentResponse.model_validate(document)
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)

@@ -3,39 +3,32 @@ import { Link } from 'react-router-dom'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/Badge'
-import type { DocumentDisplay } from '../../types/document'
+import type { DocumentDisplay, DocumentStatus } from '../../types/document'
 import { cn } from '../../lib/utils'
 
 interface DocumentCardProps {
   document: DocumentDisplay
   className?: string
+  onProcess?: (documentId: string) => void
+  isProcessing?: boolean
 }
 
-export function DocumentCard({ document, className }: DocumentCardProps) {
-  const href =
-    document.status === 'processing'
-      ? '/processing'
-      : document.status === 'ready'
-        ? '/chat'
-        : null
+function canProcess(status: DocumentStatus): boolean {
+  return status === 'uploaded' || status === 'failed'
+}
 
-  const buttonLabel =
-    document.status === 'processing'
-      ? 'View Progress'
-      : document.status === 'ready'
-        ? 'Open'
-        : 'Uploaded'
+function canOpen(status: DocumentStatus): boolean {
+  return status === 'ready' || status === 'processed'
+}
 
-  const button = (
-    <Button
-      fullWidth
-      size="sm"
-      variant={document.status === 'ready' ? 'primary' : 'outline'}
-      disabled={document.status === 'uploaded'}
-    >
-      {buttonLabel}
-    </Button>
-  )
+export function DocumentCard({
+  document,
+  className,
+  onProcess,
+  isProcessing = false,
+}: DocumentCardProps) {
+  const showProcess = canProcess(document.status)
+  const showOpen = canOpen(document.status)
 
   return (
     <Card padding="sm" className={cn('flex flex-col', className)}>
@@ -49,17 +42,42 @@ export function DocumentCard({ document, className }: DocumentCardProps) {
         </div>
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 space-y-2">
         <Badge status={document.status} />
+        {document.statusMessage && (
+          <p className="text-xs leading-relaxed text-amber-300/90">{document.statusMessage}</p>
+        )}
       </div>
 
-      {href ? (
-        <Link to={href} className="mt-auto">
-          {button}
-        </Link>
-      ) : (
-        <div className="mt-auto">{button}</div>
-      )}
+      <div className="mt-auto space-y-2">
+        {showProcess && onProcess && (
+          <Button
+            fullWidth
+            size="sm"
+            variant="outline"
+            disabled={isProcessing}
+            onClick={() => onProcess(document.id)}
+          >
+            {isProcessing ? 'Processing...' : 'Process'}
+          </Button>
+        )}
+
+        {showOpen && (
+          <Link to="/chat">
+            <Button fullWidth size="sm" variant="primary">
+              Open
+            </Button>
+          </Link>
+        )}
+
+        {document.status === 'processing' && (
+          <Link to="/processing">
+            <Button fullWidth size="sm" variant="outline">
+              View Progress
+            </Button>
+          </Link>
+        )}
+      </div>
     </Card>
   )
 }

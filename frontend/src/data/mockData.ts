@@ -1,4 +1,4 @@
-export type DocumentStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
+export type DocumentStatus = 'uploaded' | 'processing' | 'processed' | 'ready' | 'failed' | 'needs_ocr'
 
 export interface Document {
   id: string
