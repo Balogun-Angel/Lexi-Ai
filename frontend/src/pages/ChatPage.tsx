@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { FileText, MessageSquare, Plus, Settings, Sparkles, User, X } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { FileText, LogOut, MessageSquare, Plus, Settings, Sparkles, User, X } from 'lucide-react'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
 import { ChatBubble } from '../components/chat/ChatBubble'
@@ -13,11 +13,19 @@ import {
   mockCitations,
 } from '../data/mockData'
 import { cn } from '../lib/utils'
+import { useAuth } from '../context/AuthContext'
 
 export function ChatPage() {
+  const navigate = useNavigate()
+  const { logout } = useAuth()
   const [activeCitationId, setActiveCitationId] = useState<string | null>('c1')
   const [showCitationPanel, setShowCitationPanel] = useState(true)
   const activeDoc = mockDocuments[0]
+
+  function handleLogout() {
+    logout()
+    navigate('/login')
+  }
 
   return (
     <div className="flex h-screen bg-surface">
@@ -86,6 +94,14 @@ export function ChatPage() {
             <User className="h-4 w-4" />
             Profile
           </Link>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-text-secondary hover:bg-surface-hover"
+          >
+            <LogOut className="h-4 w-4" />
+            Logout
+          </button>
         </nav>
       </aside>
 

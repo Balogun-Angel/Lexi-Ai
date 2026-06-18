@@ -1,10 +1,35 @@
-import { Link } from 'react-router-dom'
+import { useState, type FormEvent } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Logo } from '../components/ui/Logo'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Card } from '../components/ui/Card'
+import { useAuth } from '../context/AuthContext'
 
 export function SignupPage() {
+  const navigate = useNavigate()
+  const { register } = useAuth()
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      await register({ full_name: fullName, email, password })
+      navigate('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Signup failed. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-surface">
       <div className="relative hidden flex-col items-center justify-center p-12 lg:flex">
@@ -25,16 +50,45 @@ export function SignupPage() {
 
           <h1 className="mb-8 text-center text-2xl font-bold text-text-primary">Create Account</h1>
 
-          <form className="space-y-5" onSubmit={(e) => e.preventDefault()}>
-            <Input label="Name" type="text" placeholder="Your name" />
-            <Input label="Email" type="email" placeholder="you@example.com" />
-            <Input label="Password" type="password" placeholder="Min. 8 characters" />
+          <form className="space-y-5" onSubmit={handleSubmit}>
+            {error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                {error}
+              </div>
+            )}
 
-            <Link to="/dashboard">
-              <Button fullWidth size="lg">
-                Create Account
-              </Button>
-            </Link>
+            <Input
+              label="Name"
+              type="text"
+              placeholder="Your name"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+              disabled={isLoading}
+            />
+            <Input
+              label="Email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={isLoading}
+            />
+            <Input
+              label="Password"
+              type="password"
+              placeholder="Min. 8 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              minLength={8}
+              required
+              disabled={isLoading}
+            />
+
+            <Button fullWidth size="lg" type="submit" disabled={isLoading}>
+              {isLoading ? 'Creating account...' : 'Create Account'}
+            </Button>
           </form>
 
           <div className="my-6 flex items-center gap-4">
@@ -43,7 +97,7 @@ export function SignupPage() {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button fullWidth variant="google" size="lg">
+          <Button fullWidth variant="google" size="lg" disabled={isLoading}>
             <svg className="h-5 w-5" viewBox="0 0 24 24">
               <path
                 fill="currentColor"

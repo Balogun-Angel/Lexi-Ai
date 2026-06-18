@@ -1,5 +1,5 @@
 import { cn } from '../../lib/utils'
-import type { DocumentStatus } from '../../data/mockData'
+import type { DocumentStatus } from '../../types/document'
 
 interface BadgeProps {
   status: DocumentStatus | 'processing-profile'
@@ -7,6 +7,10 @@ interface BadgeProps {
 }
 
 const statusConfig: Record<DocumentStatus | 'processing-profile', { label: string; className: string }> = {
+  uploaded: {
+    label: 'Uploaded',
+    className: 'bg-primary/20 text-primary border-primary/30',
+  },
   processing: {
     label: 'Processing',
     className: 'bg-warning/20 text-purple-300 border-warning/30',
