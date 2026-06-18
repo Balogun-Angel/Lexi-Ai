@@ -1,4 +1,10 @@
-export type DocumentStatus = 'uploaded' | 'processing' | 'ready' | 'failed'
+export type DocumentStatus =
+  | 'uploaded'
+  | 'processing'
+  | 'processed'
+  | 'ready'
+  | 'failed'
+  | 'needs_ocr'
 
 export interface ApiDocument {
   id: string
@@ -7,6 +13,7 @@ export interface ApiDocument {
   original_filename: string
   file_path: string
   status: DocumentStatus
+  status_message: string | null
   created_at: string
 }
 
@@ -15,4 +22,5 @@ export interface DocumentDisplay {
   title: string
   uploadedAt: string
   status: DocumentStatus
+  statusMessage: string | null
 }

@@ -15,6 +15,10 @@ const statusConfig: Record<DocumentStatus | 'processing-profile', { label: strin
     label: 'Processing',
     className: 'bg-warning/20 text-purple-300 border-warning/30',
   },
+  processed: {
+    label: 'Processed',
+    className: 'bg-accent-cyan/20 text-accent-cyan border-accent-cyan/30',
+  },
   'processing-profile': {
     label: 'Processing',
     className: 'bg-primary/20 text-primary border-primary/30',
@@ -26,6 +30,10 @@ const statusConfig: Record<DocumentStatus | 'processing-profile', { label: strin
   failed: {
     label: 'Failed',
     className: 'bg-red-500/20 text-red-400 border-red-500/30',
+  },
+  needs_ocr: {
+    label: 'Needs OCR',
+    className: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
   },
 }
 
