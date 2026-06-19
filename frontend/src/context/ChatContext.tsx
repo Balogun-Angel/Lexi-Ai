@@ -3,6 +3,7 @@ import type { ChatMessage } from '../data/mockData'
 
 export interface ChatSession {
   id: string
+  backendSessionId?: string
   documentIds: string[]
   documentTitles: string[]
   messages: ChatMessage[]
@@ -16,6 +17,11 @@ interface ChatContextValue {
   createSession: (documentIds: string[], documentTitles: string[]) => ChatSession
   setActiveSession: (sessionId: string) => void
   addMessage: (sessionId: string, message: ChatMessage) => void
+  addMessages: (
+    sessionId: string,
+    messages: ChatMessage[],
+    backendSessionId?: string,
+  ) => void
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null)
@@ -90,6 +96,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  const addMessages = useCallback(
+    (sessionId: string, messages: ChatMessage[], backendSessionId?: string) => {
+      setSessions((prev) => {
+        const next = prev.map((session) =>
+          session.id === sessionId
+            ? {
+                ...session,
+                backendSessionId: backendSessionId ?? session.backendSessionId,
+                messages: [...session.messages, ...messages],
+              }
+            : session,
+        )
+        persistSessions(next)
+        return next
+      })
+    },
+    [],
+  )
+
   const value = useMemo(
     () => ({
       sessions,
@@ -98,8 +123,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       createSession,
       setActiveSession,
       addMessage,
+      addMessages,
     }),
-    [sessions, activeSessionId, activeSession, createSession, setActiveSession, addMessage],
+    [
+      sessions,
+      activeSessionId,
+      activeSession,
+      createSession,
+      setActiveSession,
+      addMessage,
+      addMessages,
+    ],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

@@ -32,7 +32,8 @@ class Settings(BaseSettings):
 
     # Chat generation (Groq)
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_fallback_model: str = "llama-3.1-8b-instant"
 
     @property
     def upload_path(self) -> Path:

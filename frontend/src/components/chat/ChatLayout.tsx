@@ -10,9 +10,10 @@ interface ChatLayoutProps {
   children: React.ReactNode
   title?: string
   subtitle?: string
+  headerExtra?: React.ReactNode
 }
 
-export function ChatLayout({ children, title, subtitle }: ChatLayoutProps) {
+export function ChatLayout({ children, title, subtitle, headerExtra }: ChatLayoutProps) {
   const navigate = useNavigate()
   const { logout } = useAuth()
   const { sessions, activeSessionId, setActiveSession } = useChat()
@@ -104,10 +105,17 @@ export function ChatLayout({ children, title, subtitle }: ChatLayoutProps) {
       </aside>
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {(title || subtitle) && (
+        {(title || subtitle || headerExtra) && (
           <header className="border-b border-border px-6 py-4">
-            {title && <h1 className="truncate text-lg font-semibold text-text-primary">{title}</h1>}
-            {subtitle && <p className="mt-1 text-sm text-text-muted">{subtitle}</p>}
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                {title && (
+                  <h1 className="truncate text-lg font-semibold text-text-primary">{title}</h1>
+                )}
+                {subtitle && <p className="mt-1 text-sm text-text-muted">{subtitle}</p>}
+              </div>
+              {headerExtra}
+            </div>
           </header>
         )}
         {children}

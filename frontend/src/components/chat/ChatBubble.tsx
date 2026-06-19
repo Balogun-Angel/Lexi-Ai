@@ -1,7 +1,7 @@
 import { Sparkles } from 'lucide-react'
 import { CitationCard } from './CitationCard'
 import type { ChatMessage } from '../../data/mockData'
-import { cn } from '../../lib/utils'
+import { renderMarkdownContent } from '../../lib/chatMarkdown'
 
 interface ChatBubbleProps {
   message: ChatMessage
@@ -28,12 +28,8 @@ export function ChatBubble({ message, activeCitationId, onCitationClick }: ChatB
         <Sparkles className="h-4 w-4 text-primary" />
       </div>
       <div className="max-w-[85%] space-y-3">
-        <div className="rounded-2xl rounded-tl-md border border-border bg-surface-card px-4 py-3 text-sm leading-relaxed text-text-secondary">
-          {message.content.split('\n').map((line, i) => (
-            <p key={i} className={cn(line.startsWith('•') && 'ml-1')}>
-              {line || '\u00A0'}
-            </p>
-          ))}
+        <div className="rounded-2xl rounded-tl-md border border-border bg-surface-card px-4 py-3 text-sm leading-relaxed">
+          {renderMarkdownContent(message.content)}
         </div>
 
         {message.citations && message.citations.length > 0 && (
