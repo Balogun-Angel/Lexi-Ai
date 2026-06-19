@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.services.chunking import chunk_text
+from app.services.embeddings import EmbeddingError, generate_embeddings
 from app.services.extraction import PDFExtractionError, PDFNeedsOCRError, extract_text_by_page
 
 ProcessingResult = Literal["processed", "needs_ocr", "failed"]
@@ -62,7 +63,7 @@ def build_chunk_drafts(file_path: str) -> list[ChunkDraft]:
 
 def process_document_by_id(document_id: uuid.UUID, db: Session) -> ProcessingResult:
     """
-    Reprocess a document: delete existing chunks, extract, chunk, save.
+    Reprocess a document: delete existing chunks, extract, chunk, embed, save.
     Returns "processed", "needs_ocr", or "failed".
     """
     document = db.scalar(select(Document).where(Document.id == document_id))
@@ -73,13 +74,19 @@ def process_document_by_id(document_id: uuid.UUID, db: Session) -> ProcessingRes
 
     try:
         drafts = build_chunk_drafts(document.file_path)
-        for draft in drafts:
+        embeddings = generate_embeddings([draft.content for draft in drafts])
+
+        if len(embeddings) != len(drafts):
+            raise DocumentProcessingError("Embedding count does not match chunk count")
+
+        for draft, embedding in zip(drafts, embeddings, strict=True):
             db.add(
                 DocumentChunk(
                     document_id=document.id,
                     content=draft.content,
                     page_number=draft.page_number,
                     chunk_index=draft.chunk_index,
+                    embedding=embedding,
                 )
             )
         document.status = "processed"
@@ -89,7 +96,7 @@ def process_document_by_id(document_id: uuid.UUID, db: Session) -> ProcessingRes
         document.status = "needs_ocr"
         document.status_message = NEEDS_OCR_MESSAGE
         result = "needs_ocr"
-    except (DocumentProcessingError, Exception):
+    except (DocumentProcessingError, EmbeddingError, Exception):
         document.status = "failed"
         document.status_message = None
         result = "failed"

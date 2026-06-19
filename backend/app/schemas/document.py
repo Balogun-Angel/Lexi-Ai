@@ -36,3 +36,15 @@ class DocumentChunkListResponse(BaseModel):
 class ProcessAllResponse(BaseModel):
     processed: int
     failed: int
+
+
+class SearchChunkResult(BaseModel):
+    content: str
+    page_number: int
+    score: float
+
+
+class DocumentSearchResponse(BaseModel):
+    document_id: uuid.UUID
+    query: str
+    results: list[SearchChunkResult]

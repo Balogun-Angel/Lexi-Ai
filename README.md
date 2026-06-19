@@ -73,8 +73,31 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
-uvicorn app.main:app --reload
 ```
+
+**Recommended — stable server (use while testing the app):**
+
+```bash
+# Git Bash / macOS / Linux
+./scripts/dev.sh
+
+# Windows CMD
+scripts\dev.bat
+```
+
+**Optional — hot reload while editing Python code only:**
+
+```bash
+# Git Bash / macOS / Linux
+./scripts/dev-reload.sh
+
+# Windows CMD
+scripts\dev-reload.bat
+```
+
+> **Important:** Do not run `uvicorn app.main:app --reload` without `--reload-dir app`.
+> On this project, that watches `venv/` (PyTorch / sentence-transformers) and can cause
+> endless reloads — especially on Windows with OneDrive. The scripts above avoid that.
 
 ## 📂 Project Structure
 

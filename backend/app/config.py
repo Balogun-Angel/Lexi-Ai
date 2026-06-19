@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 20
 
+    # Embeddings (local sentence-transformers)
+    embedding_provider: str = "local"
+    local_embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_dimensions: int = 384
+
+    # Chat generation (Groq)
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.1-8b-instant"
+
     @property
     def upload_path(self) -> Path:
         path = BACKEND_ROOT / self.upload_dir

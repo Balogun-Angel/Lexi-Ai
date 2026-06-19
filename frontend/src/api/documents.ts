@@ -1,5 +1,6 @@
 import type { ApiDocument, DocumentDisplay } from '../types/document'
-import { apiRequest } from './client'
+import { API_BASE_URL, apiRequest } from './client'
+import { getToken } from '../lib/auth'
 
 export interface ProcessAllResult {
   processed: number
@@ -40,6 +41,20 @@ export function deleteDocument(documentId: string): Promise<void> {
   return apiRequest<void>(`/documents/${documentId}`, {
     method: 'DELETE',
   })
+}
+
+export async function fetchDocumentFileBlob(documentId: string): Promise<string> {
+  const token = getToken()
+  const response = await fetch(`${API_BASE_URL}/documents/${documentId}/file`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+
+  if (!response.ok) {
+    throw new Error('Failed to load PDF file')
+  }
+
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
 }
 
 export function mapDocument(document: ApiDocument): DocumentDisplay {

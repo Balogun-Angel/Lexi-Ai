@@ -1,8 +1,6 @@
-from pathlib import Path
-
 import fitz
 
-from app.config import settings
+from app.services.storage import get_pdf_absolute_path
 
 
 class PDFExtractionError(Exception):
@@ -11,10 +9,6 @@ class PDFExtractionError(Exception):
 
 class PDFNeedsOCRError(Exception):
     """PDF has no extractable text (likely scanned or image-only)."""
-
-
-def get_pdf_absolute_path(file_path: str) -> Path:
-    return settings.upload_path / Path(file_path).name
 
 
 def extract_text_by_page(file_path: str) -> list[tuple[int, str]]:
