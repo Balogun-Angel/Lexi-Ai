@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.services.answer_mode import (
     AnswerMode,
+    allows_general_reasoning,
     detect_answer_mode,
     requires_strict_evidence,
 )
@@ -18,52 +19,89 @@ logger = logging.getLogger(__name__)
 SNIPPET_MAX_LENGTH = 240
 MAX_HISTORY_MESSAGES = 6
 FACTUAL_MIN_RELEVANCE_SCORE = 0.12
+CITATION_EVIDENCE_MIN_SCORE = 0.18
 
 NOT_FOUND_ANSWER = (
     "I couldn't find that information in the selected document(s)."
 )
 
-SYSTEM_PROMPT = """You are LexiAI, an intelligent PDF research assistant. Help users understand, summarize, and learn from their uploaded documents with accuracy, clarity, and useful reasoning.
+SYSTEM_PROMPT = """You are LexiAI, an intelligent document assistant.
 
-General rules:
-- Sound natural, helpful, and conversational — not robotic.
-- Use markdown with headings, short paragraphs, bullet points, and **bold** key terms.
-- Reference source numbers or page numbers when helpful.
-- Do not invent facts that are not supported by the document context.
-- Do not say "provided excerpts" or "as an expert".
-- Citation cards are added separately; still mention sources when useful."""
+Your job is to help users understand, analyze, and improve based on their uploaded documents.
+
+Always use the selected document context as the main evidence.
+
+If the user asks for a factual answer, answer only from the document.
+
+If the user asks for advice, improvement, feedback, review, strategy, explanation, or recommendations, you may combine:
+1. facts found in the document
+2. reasonable general knowledge
+3. practical real-world reasoning
+
+When using general reasoning, make it clear that it is your recommendation, not a direct quote from the document.
+
+Avoid saying "I couldn't find that information" unless:
+- no document chunks were available
+- the user asks for a specific fact that is not in the document
+
+Use a natural, helpful, ChatGPT-like tone.
+Do not say "provided excerpts."
+Do not say "as an expert."
+Use markdown with headings, bullets, and clear structure.
+Keep answers grounded, useful, and conversational."""
+
+REASONING_MODE_INSTRUCTION = (
+    "Structure your answer with two clear sections when helpful:\n"
+    "**From the document:** — facts and observations supported by the passages\n"
+    "**My recommendations:** — practical suggestions using general knowledge and reasoning\n\n"
+    "Do not invent fake document details (names, dates, employers, metrics).\n"
+    "Do not claim recommendations are directly in the PDF unless they are.\n"
+    "Do NOT say you couldn't find information — use the document as evidence and give helpful advice."
+)
 
 MODE_INSTRUCTIONS: dict[AnswerMode, str] = {
     AnswerMode.FACTUAL: (
-        "Answer mode: factual lookup.\n"
-        "Answer only if the document context supports the specific fact requested.\n"
-        "If the exact fact is missing, say clearly: "
-        '"I couldn\'t find that information in the selected document(s)."\n'
-        "Be direct and concise."
+        "The user wants a specific factual answer.\n"
+        "Answer only from the document context.\n"
+        "If the exact fact is missing, say: "
+        '"I couldn\'t find that information in the selected document(s)."'
     ),
     AnswerMode.SUMMARY: (
-        "Answer mode: document summary.\n"
-        "Use the retrieved passages to produce a useful document-level summary.\n"
-        "Identify the document type, main purpose, key themes, important facts, and takeaways.\n"
-        "You do not need one exact sentence match — synthesize across the passages.\n"
-        "For resumes/CVs, cover profile, education, experience, projects, skills, and achievements."
+        "The user wants a document summary.\n"
+        "Synthesize the passages into a useful overview: document type, purpose, key themes, "
+        "important facts, and takeaways.\n"
+        "You do not need one exact sentence match — combine information across the passages."
     ),
     AnswerMode.ANALYSIS: (
-        "Answer mode: analysis and advice.\n"
-        "Use the document as your evidence base.\n"
-        "You may offer reasonable recommendations, strengths, weaknesses, and improvements based on "
-        "what the document shows.\n"
-        "Phrase advice clearly, e.g. 'Based on this document...', 'One improvement could be...', "
-        "'Your resume shows strength in...'.\n"
-        "Do not invent credentials, employers, dates, or achievements that are not in the document.\n"
-        "Example: for 'How can I improve my skills?' on a resume, highlight existing strengths and "
-        "suggest credible next steps grounded in what is already shown."
+        "The user wants analysis.\n"
+        f"{REASONING_MODE_INSTRUCTION}"
+    ),
+    AnswerMode.ADVICE: (
+        "The user wants advice or improvement suggestions.\n"
+        f"{REASONING_MODE_INSTRUCTION}\n"
+        "Example: for 'How can I improve this project?', describe what the document already shows, "
+        "then suggest credible next steps (tests, docs, deployment, UX, etc.) based on common best practices."
+    ),
+    AnswerMode.RESUME_REVIEW: (
+        "The user wants resume/CV review or recruiter-focused feedback.\n"
+        f"{REASONING_MODE_INSTRUCTION}\n"
+        "Cover profile, education, experience, projects, skills, strengths, and improvement ideas."
+    ),
+    AnswerMode.PROJECT_REVIEW: (
+        "The user wants project review or improvement ideas.\n"
+        f"{REASONING_MODE_INSTRUCTION}\n"
+        "Describe what the project document shows, then suggest practical improvements."
     ),
     AnswerMode.STUDY_HELP: (
-        "Answer mode: study help.\n"
-        "Explain concepts clearly, break ideas down, and highlight the most important points.\n"
-        "Create useful notes, identify key concepts, and help the user learn from the document.\n"
-        "Use examples from the document when available."
+        "The user wants study help.\n"
+        "Explain concepts clearly using the document, and add helpful context from general knowledge "
+        "when it aids understanding.\n"
+        f"{REASONING_MODE_INSTRUCTION}"
+    ),
+    AnswerMode.GENERAL_QUESTION: (
+        "Answer the user's question using the document as primary evidence.\n"
+        "You may add reasonable general knowledge when it makes the answer more useful.\n"
+        f"{REASONING_MODE_INSTRUCTION}"
     ),
 }
 
@@ -93,7 +131,7 @@ def make_snippet(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str:
 
 def build_context_block(chunks: list[RetrievalResult]) -> str:
     if not chunks:
-        return "No relevant document context was found."
+        return "No document passages were retrieved."
 
     blocks: list[str] = []
     for index, chunk in enumerate(chunks, start=1):
@@ -133,6 +171,30 @@ def build_chat_messages(
     return messages
 
 
+def select_citation_chunks(
+    chunks: list[RetrievalResult],
+    answer_mode: AnswerMode,
+) -> list[RetrievalResult]:
+    if not chunks:
+        return []
+
+    if requires_strict_evidence(answer_mode):
+        return chunks
+
+    evidence = [
+        chunk
+        for chunk in chunks
+        if chunk.score >= CITATION_EVIDENCE_MIN_SCORE
+        or chunk.semantic_score >= 0.15
+        or chunk.keyword_score >= 0.15
+    ]
+
+    if not evidence:
+        evidence = sorted(chunks, key=lambda item: item.score, reverse=True)[:5]
+
+    return evidence[:8]
+
+
 def chunks_to_citations(chunks: list[RetrievalResult]) -> list[dict]:
     return [
         {
@@ -145,16 +207,6 @@ def chunks_to_citations(chunks: list[RetrievalResult]) -> list[dict]:
         }
         for chunk in chunks
     ]
-
-
-def _answer_references_sources(answer: str) -> bool:
-    patterns = (
-        r"\bsource\s+\d+\b",
-        r"\bpage\s+\d+\b",
-        r"\[\d+\]",
-        r"\bsources?\b",
-    )
-    return any(re.search(pattern, answer, re.IGNORECASE) for pattern in patterns)
 
 
 def _llm_claims_not_found(answer: str) -> bool:
@@ -177,21 +229,23 @@ def verify_answer(
         return NOT_FOUND_ANSWER
 
     if not answer.strip():
-        return NOT_FOUND_ANSWER
+        return NOT_FOUND_ANSWER if requires_strict_evidence(answer_mode) else answer.strip()
 
-    normalized = answer.lower()
+    cleaned = answer.strip()
+    normalized = cleaned.lower()
     if "provided excerpt" in normalized or "as an expert" in normalized:
-        answer = re.sub(r"(?i)provided excerpts?", "the document", answer)
-        answer = re.sub(r"(?i)as an expert,?\s*", "", answer)
+        cleaned = re.sub(r"(?i)provided excerpts?", "the document", cleaned)
+        cleaned = re.sub(r"(?i)as an expert,?\s*", "", cleaned)
+
+    if allows_general_reasoning(answer_mode):
+        return cleaned
 
     if requires_strict_evidence(answer_mode):
         best_score = max(chunk.score for chunk in chunks)
-        if best_score < FACTUAL_MIN_RELEVANCE_SCORE and _llm_claims_not_found(answer):
+        if best_score < FACTUAL_MIN_RELEVANCE_SCORE and _llm_claims_not_found(cleaned):
             return NOT_FOUND_ANSWER
-        if best_score < FACTUAL_MIN_RELEVANCE_SCORE and not _llm_claims_not_found(answer):
-            return answer.strip()
 
-    return answer.strip()
+    return cleaned
 
 
 def _log_retrieval_debug(
@@ -200,29 +254,19 @@ def _log_retrieval_debug(
     document_ids: list,
     question: str,
     answer_mode: AnswerMode,
+    model_mode: str,
     retrieval,
 ) -> None:
-    top_chunks = [
-        {
-            "chunk_id": str(chunk.chunk_id),
-            "document_id": str(chunk.document_id),
-            "page_number": chunk.page_number,
-            "score": round(chunk.score, 4),
-            "snippet": make_snippet(chunk.content, 80),
-        }
-        for chunk in retrieval.chunks[:5]
-    ]
-
     logger.info(
-        "RAG debug: conversation_id=%s document_ids=%s question=%r answer_mode=%s "
-        "chunks_found=%s chunks_with_embeddings=%s top_chunks=%s fallback_retrieval=%s",
+        "RAG debug: conversation_id=%s intent=%s model_mode=%s document_ids=%s question=%r "
+        "retrieved_chunks=%s chunks_with_embeddings=%s fallback_retrieval=%s",
         conversation_id,
+        answer_mode.value,
+        model_mode,
         [str(doc_id) for doc_id in document_ids],
         question,
-        answer_mode.value,
-        retrieval.chunk_stats.total_chunks,
+        len(retrieval.chunks),
         retrieval.chunk_stats.chunks_with_embeddings,
-        top_chunks,
         retrieval.fallback_retrieval_used,
     )
 
@@ -249,6 +293,7 @@ def run_rag_pipeline(
         document_ids=document_ids,
         question=question,
         answer_mode=answer_mode,
+        model_mode=resolved_mode.value,
         retrieval=retrieval,
     )
 
@@ -269,14 +314,6 @@ def run_rag_pipeline(
             fallback_retrieval_used=retrieval.fallback_retrieval_used,
         )
 
-    if requires_strict_evidence(answer_mode):
-        best_score = max(chunk.score for chunk in chunks)
-        if best_score < FACTUAL_MIN_RELEVANCE_SCORE:
-            logger.info(
-                "RAG pipeline: factual question with low relevance (best_score=%.3f)",
-                best_score,
-            )
-
     messages = build_chat_messages(question, chunks, history, answer_mode)
 
     try:
@@ -287,26 +324,23 @@ def run_rag_pipeline(
         raise ChatGenerationError(str(exc)) from exc
 
     answer = verify_answer(completion.content, chunks, answer_mode)
-    citations = chunks_to_citations(chunks)
+    citation_chunks = select_citation_chunks(chunks, answer_mode)
+    citations = chunks_to_citations(citation_chunks)
 
     if answer == NOT_FOUND_ANSWER and requires_strict_evidence(answer_mode):
         citations = []
 
     citations_returned = len(citations) > 0
-    if citations_returned and not _answer_references_sources(answer):
-        logger.info(
-            "RAG pipeline: attaching %s citation cards",
-            len(citations),
-        )
 
     logger.info(
-        "RAG pipeline complete: conversation_id=%s answer_mode=%s model_mode=%s "
-        "model_used=%s fallback=%s citations_returned=%s",
+        "RAG pipeline complete: conversation_id=%s intent=%s model_mode=%s model_used=%s "
+        "retrieved_chunks=%s fallback_retrieval=%s citations_returned=%s",
         conversation_id,
         answer_mode.value,
         completion.model_mode.value,
         completion.model_used,
-        completion.fallback_used,
+        len(chunks),
+        retrieval.fallback_retrieval_used,
         citations_returned,
     )
 

@@ -14,7 +14,7 @@ from app.services.query_rewrite import rewrite_queries
 
 logger = logging.getLogger(__name__)
 
-BASELINE_CHUNK_LIMIT = 10
+BASELINE_CHUNK_LIMIT = 15
 BASELINE_CHUNK_SCORE = 0.25
 
 

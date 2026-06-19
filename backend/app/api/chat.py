@@ -181,13 +181,13 @@ def chat(
     db.refresh(session)
 
     logger.info(
-        "Chat response: session_id=%s answer_mode=%s model_mode=%s model_used=%s "
-        "fallback=%s fallback_retrieval=%s citations_returned=%s",
+        "Chat response: session_id=%s intent=%s model_mode=%s model_used=%s "
+        "retrieved_chunks=%s fallback_retrieval=%s citations_returned=%s",
         session.id,
         rag_result.answer_mode.value,
         rag_result.model_mode,
         rag_result.model_used,
-        rag_result.fallback_used,
+        rag_result.reranked_count,
         rag_result.fallback_retrieval_used,
         rag_result.citations_returned,
     )

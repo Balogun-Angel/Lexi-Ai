@@ -76,16 +76,27 @@ MODE_QUERY_EXPANSIONS: dict[AnswerMode, list[str]] = {
     AnswerMode.SUMMARY: [
         "document overview main topics",
         "key themes purpose summary",
-        "profile education experience projects skills achievements",
+    ],
+    AnswerMode.RESUME_REVIEW: [
+        "education experience skills projects achievements",
+        "work history technical skills strengths",
+    ],
+    AnswerMode.PROJECT_REVIEW: [
+        "features architecture tech stack implementation",
+        "project goals scope deliverables",
+    ],
+    AnswerMode.ADVICE: [
+        "skills experience projects improvements recommendations",
+        "strengths weaknesses opportunities",
     ],
     AnswerMode.ANALYSIS: [
-        "skills experience projects strengths achievements",
-        "education work history technical skills",
-        "improvements recommendations feedback",
+        "analysis evaluation strengths weaknesses tradeoffs",
     ],
     AnswerMode.STUDY_HELP: [
-        "important concepts definitions",
-        "key ideas examples explanations",
+        "important concepts definitions key ideas",
+    ],
+    AnswerMode.GENERAL_QUESTION: [
+        "main topics key details overview",
     ],
     AnswerMode.FACTUAL: [],
 }
