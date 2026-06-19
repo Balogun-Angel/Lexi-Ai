@@ -27,5 +27,5 @@ def resolve_model_mode(value: str | None) -> ModelMode:
 
 def get_groq_model_for_mode(mode: ModelMode) -> str:
     if mode == ModelMode.SMART:
-        return settings.groq_model
-    return settings.groq_fallback_model
+        return settings.groq_model_smart
+    return settings.groq_model_fast

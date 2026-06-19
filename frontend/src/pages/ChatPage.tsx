@@ -14,6 +14,7 @@ import { useChat } from '../context/ChatContext'
 import {
   loadModelMode,
   saveModelMode,
+  SMART_MODE_FALLBACK_NOTICE,
   SMART_MODE_RATE_LIMIT_MESSAGE,
   type ModelMode,
 } from '../lib/modelMode'
@@ -85,10 +86,7 @@ export function ChatPage() {
       )
 
       if (response.fallback_used) {
-        setNotice(
-          response.fallback_reason ??
-            'Smart Mode was temporarily limited, so this answer used Fast Mode.',
-        )
+        setNotice(SMART_MODE_FALLBACK_NOTICE)
       }
     } catch (err) {
       const messageText = err instanceof Error ? err.message : 'Failed to send message'

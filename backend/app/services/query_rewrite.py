@@ -1,6 +1,6 @@
 import re
 
-from app.services.intent import QuestionIntent
+from app.services.answer_mode import AnswerMode
 
 STOPWORDS = {
     "a",
@@ -72,25 +72,33 @@ STOPWORDS = {
     "paper",
 }
 
-INTENT_QUERY_EXPANSIONS: dict[QuestionIntent, list[str]] = {
-    QuestionIntent.SUMMARY: [
+MODE_QUERY_EXPANSIONS: dict[AnswerMode, list[str]] = {
+    AnswerMode.SUMMARY: [
         "document overview main topics",
         "key themes purpose summary",
     ],
-    QuestionIntent.RESUME_REVIEW: [
-        "education experience skills projects",
-        "work history achievements strengths",
+    AnswerMode.RESUME_REVIEW: [
+        "education experience skills projects achievements",
+        "work history technical skills strengths",
     ],
-    QuestionIntent.STUDY_HELP: [
-        "important concepts definitions",
-        "key ideas examples",
+    AnswerMode.PROJECT_REVIEW: [
+        "features architecture tech stack implementation",
+        "project goals scope deliverables",
     ],
-    QuestionIntent.EXPLANATION: [
-        "definition explanation details",
+    AnswerMode.ADVICE: [
+        "skills experience projects improvements recommendations",
+        "strengths weaknesses opportunities",
     ],
-    QuestionIntent.COMPARISON: [
-        "differences similarities comparison",
+    AnswerMode.ANALYSIS: [
+        "analysis evaluation strengths weaknesses tradeoffs",
     ],
+    AnswerMode.STUDY_HELP: [
+        "important concepts definitions key ideas",
+    ],
+    AnswerMode.GENERAL_QUESTION: [
+        "main topics key details overview",
+    ],
+    AnswerMode.FACTUAL: [],
 }
 
 
@@ -151,7 +159,7 @@ def _extract_role_phrases(question: str) -> list[str]:
     patterns = (
         r"\b(?:software|data|product|research|engineering|marketing|sales)\s+[A-Za-z]+\b",
         r"\b(?:intern(?:ship)?|internship experience|work experience|employment)\b",
-        r"\b(?:projects?|achievements?|responsibilities)\b",
+        r"\b(?:projects?|achievements?|responsibilities|skills?)\b",
     )
     phrases: list[str] = []
     for pattern in patterns:
@@ -159,7 +167,7 @@ def _extract_role_phrases(question: str) -> list[str]:
     return phrases
 
 
-def rewrite_queries(question: str, intent: QuestionIntent, max_queries: int = 5) -> list[str]:
+def rewrite_queries(question: str, mode: AnswerMode, max_queries: int = 5) -> list[str]:
     normalized = " ".join(question.split())
     queries: list[str] = [normalized]
 
@@ -179,14 +187,11 @@ def rewrite_queries(question: str, intent: QuestionIntent, max_queries: int = 5)
 
     terms = _extract_meaningful_terms(question)
     queries.extend(_build_term_queries(terms))
-    queries.extend(INTENT_QUERY_EXPANSIONS.get(intent, []))
+    queries.extend(MODE_QUERY_EXPANSIONS.get(mode, []))
 
-    if intent == QuestionIntent.SPECIFIC_FACT and at_phrases:
+    if mode == AnswerMode.FACTUAL and at_phrases:
         for org in at_phrases:
             queries.append(f"projects at {org}")
-
-    if intent in {QuestionIntent.SUMMARY, QuestionIntent.RESUME_REVIEW}:
-        queries.extend(["profile education experience projects skills achievements"])
 
     deduped = _dedupe_preserve_order(queries)
     target = min(max_queries, max(3, len(deduped)))

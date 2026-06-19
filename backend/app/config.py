@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -30,10 +31,16 @@ class Settings(BaseSettings):
     local_embedding_model: str = "all-MiniLM-L6-v2"
     embedding_dimensions: int = 384
 
-    # Chat generation (Groq)
+    # Chat generation (Groq) — mapped from model_mode on the backend only
     groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
-    groq_fallback_model: str = "llama-3.1-8b-instant"
+    groq_model_fast: str = Field(
+        default="llama-3.1-8b-instant",
+        validation_alias=AliasChoices("GROQ_MODEL_FAST", "GROQ_FALLBACK_MODEL"),
+    )
+    groq_model_smart: str = Field(
+        default="llama-3.3-70b-versatile",
+        validation_alias=AliasChoices("GROQ_MODEL_SMART", "GROQ_MODEL"),
+    )
 
     @property
     def upload_path(self) -> Path:

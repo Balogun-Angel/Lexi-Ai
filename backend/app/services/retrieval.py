@@ -1,15 +1,21 @@
+import logging
 import re
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
+from app.services.answer_mode import AnswerMode, allows_inference, get_top_k
 from app.services.embeddings import generate_query_embedding
-from app.services.intent import QuestionIntent, get_top_k
 from app.services.query_rewrite import rewrite_queries
+
+logger = logging.getLogger(__name__)
+
+BASELINE_CHUNK_LIMIT = 15
+BASELINE_CHUNK_SCORE = 0.25
 
 
 @dataclass
@@ -33,12 +39,20 @@ class RetrievalResult:
 
 
 @dataclass
+class ChunkStats:
+    total_chunks: int
+    chunks_with_embeddings: int
+
+
+@dataclass
 class RetrievalPipelineResult:
-    intent: QuestionIntent
+    answer_mode: AnswerMode
     rewritten_queries: list[str]
     candidate_count: int
     reranked_count: int
     chunks: list[RetrievalResult]
+    chunk_stats: ChunkStats
+    fallback_retrieval_used: bool
 
 
 KEYWORD_STOPWORDS = {
@@ -95,6 +109,65 @@ KEYWORD_STOPWORDS = {
     "document",
     "pdf",
 }
+
+
+def _get_chunk_stats(document_ids: list[uuid.UUID], db: Session) -> ChunkStats:
+    if not document_ids:
+        return ChunkStats(total_chunks=0, chunks_with_embeddings=0)
+
+    total = db.scalar(
+        select(func.count())
+        .select_from(DocumentChunk)
+        .where(DocumentChunk.document_id.in_(document_ids))
+    ) or 0
+
+    with_embeddings = db.scalar(
+        select(func.count())
+        .select_from(DocumentChunk)
+        .where(
+            DocumentChunk.document_id.in_(document_ids),
+            DocumentChunk.embedding.isnot(None),
+        )
+    ) or 0
+
+    return ChunkStats(total_chunks=total, chunks_with_embeddings=with_embeddings)
+
+
+def _fetch_baseline_chunks(
+    document_ids: list[uuid.UUID],
+    db: Session,
+    limit: int = BASELINE_CHUNK_LIMIT,
+) -> list[RetrievalResult]:
+    if not document_ids:
+        return []
+
+    rows = db.execute(
+        select(
+            DocumentChunk.id,
+            DocumentChunk.document_id,
+            DocumentChunk.content,
+            DocumentChunk.page_number,
+            Document.original_filename,
+        )
+        .join(Document, Document.id == DocumentChunk.document_id)
+        .where(DocumentChunk.document_id.in_(document_ids))
+        .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
+        .limit(limit)
+    ).all()
+
+    return [
+        RetrievalResult(
+            chunk_id=row.id,
+            document_id=row.document_id,
+            document_name=row.original_filename,
+            content=row.content,
+            page_number=row.page_number,
+            score=BASELINE_CHUNK_SCORE,
+            semantic_score=0.0,
+            keyword_score=0.0,
+        )
+        for row in rows
+    ]
 
 
 def search_document_chunks(
@@ -363,12 +436,13 @@ def search_chunks_across_documents(
 def retrieve_and_rerank(
     document_ids: list[uuid.UUID],
     question: str,
-    intent: QuestionIntent,
+    answer_mode: AnswerMode,
     db: Session,
 ) -> RetrievalPipelineResult:
-    rewritten_queries = rewrite_queries(question, intent)
-    top_k = get_top_k(intent)
+    rewritten_queries = rewrite_queries(question, answer_mode)
+    top_k = get_top_k(answer_mode)
     candidate_limit = max(top_k * 3, 20)
+    chunk_stats = _get_chunk_stats(document_ids, db)
 
     candidates: dict[uuid.UUID, RetrievalResult] = {}
 
@@ -391,11 +465,37 @@ def retrieve_and_rerank(
     candidate_list = list(candidates.values())
     reranked = _rerank_candidates(candidate_list, question)
     final_chunks = _select_with_page_diversity(reranked, top_k)
+    fallback_retrieval_used = False
+
+    should_use_baseline = (
+        not final_chunks and chunk_stats.total_chunks > 0
+    ) or (
+        allows_inference(answer_mode)
+        and len(final_chunks) < 3
+        and chunk_stats.total_chunks > 0
+    )
+
+    if should_use_baseline:
+        baseline = _fetch_baseline_chunks(document_ids, db, limit=BASELINE_CHUNK_LIMIT)
+        if baseline:
+            fallback_retrieval_used = True
+            if not final_chunks:
+                final_chunks = baseline[:top_k]
+            else:
+                existing_ids = {chunk.chunk_id for chunk in final_chunks}
+                for chunk in baseline:
+                    if chunk.chunk_id not in existing_ids:
+                        final_chunks.append(chunk)
+                        existing_ids.add(chunk.chunk_id)
+                    if len(final_chunks) >= top_k:
+                        break
 
     return RetrievalPipelineResult(
-        intent=intent,
+        answer_mode=answer_mode,
         rewritten_queries=rewritten_queries,
         candidate_count=len(candidate_list),
         reranked_count=len(final_chunks),
-        chunks=final_chunks,
+        chunks=final_chunks[:top_k],
+        chunk_stats=chunk_stats,
+        fallback_retrieval_used=fallback_retrieval_used,
     )

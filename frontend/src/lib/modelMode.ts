@@ -7,12 +7,12 @@ export const MODEL_MODE_OPTIONS: Record<
   { label: string; description: string }
 > = {
   fast: {
-    label: 'Fast',
+    label: 'Fast Mode',
     description: 'Faster responses, best for simple questions',
   },
   smart: {
-    label: 'Smart',
-    description: 'More detailed reasoning, best for summaries and complex questions',
+    label: 'Smart Mode',
+    description: 'Deeper reasoning, best for summaries and complex questions',
   },
 }
 
@@ -31,3 +31,6 @@ export function saveModelMode(mode: ModelMode) {
 
 export const SMART_MODE_RATE_LIMIT_MESSAGE =
   'Smart Mode is temporarily limited. Try Fast Mode or wait a moment.'
+
+export const SMART_MODE_FALLBACK_NOTICE =
+  'Smart Mode was limited, so LexiAI answered using Fast Mode.'
