@@ -8,6 +8,8 @@ from app.services.model_modes import ModelMode, get_groq_model_for_mode, resolve
 
 logger = logging.getLogger(__name__)
 
+SMART_MODE_FALLBACK_REASON = "Smart Mode was limited, so LexiAI answered using Fast Mode."
+
 SMART_MODE_RATE_LIMIT_MESSAGE = (
     "Smart Mode is temporarily limited. Try Fast Mode or wait a moment."
 )
@@ -36,12 +38,21 @@ def _get_client() -> Groq:
     return Groq(api_key=settings.groq_api_key)
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
+def _is_smart_mode_fallback_error(exc: Exception) -> bool:
     message = str(exc).lower()
-    return any(
-        marker in message
-        for marker in ("rate limit", "rate_limit", "429", "too many requests")
+    fallback_markers = (
+        "rate limit",
+        "rate_limit",
+        "429",
+        "too many requests",
+        "503",
+        "model",
+        "not found",
+        "decommissioned",
+        "overloaded",
+        "unavailable",
     )
+    return any(marker in message for marker in fallback_markers)
 
 
 def _is_retryable_model_error(exc: Exception) -> bool:
@@ -94,10 +105,10 @@ def generate_chat_completion(
     except LLMError:
         raise
     except Exception as exc:
-        if mode == ModelMode.SMART and _is_rate_limit_error(exc):
+        if mode == ModelMode.SMART and _is_smart_mode_fallback_error(exc):
             fast_model = get_groq_model_for_mode(ModelMode.FAST)
             logger.warning(
-                "Smart mode rate-limited (%s); retrying once with fast model %s",
+                "Smart mode unavailable (%s); retrying once with fast model %s",
                 exc,
                 fast_model,
             )
@@ -112,7 +123,7 @@ def generate_chat_completion(
                     model_mode=mode,
                     model_used=fast_model,
                     fallback_used=True,
-                    fallback_reason="Smart Mode rate-limited",
+                    fallback_reason=SMART_MODE_FALLBACK_REASON,
                 )
             except LLMError:
                 raise
