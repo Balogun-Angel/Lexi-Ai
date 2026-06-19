@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from app.services.intent import QuestionIntent, detect_intent
+from app.services.answer_mode import (
+    AnswerMode,
+    detect_answer_mode,
+    requires_strict_evidence,
+)
 from app.services.llm import LLMError, SmartModeRateLimitError, generate_chat_completion
 from app.services.model_modes import resolve_model_mode
 from app.services.retrieval import RetrievalResult, retrieve_and_rerank
@@ -13,53 +17,53 @@ logger = logging.getLogger(__name__)
 
 SNIPPET_MAX_LENGTH = 240
 MAX_HISTORY_MESSAGES = 6
-MIN_RELEVANCE_SCORE = 0.18
+FACTUAL_MIN_RELEVANCE_SCORE = 0.12
 
 NOT_FOUND_ANSWER = (
     "I couldn't find that information in the selected document(s)."
 )
 
-SYSTEM_PROMPT = """You are LexiAI, an intelligent PDF research assistant. Your job is to help users understand their uploaded documents with accuracy, clarity, and useful reasoning.
+SYSTEM_PROMPT = """You are LexiAI, an intelligent PDF research assistant. Help users understand, summarize, and learn from their uploaded documents with accuracy, clarity, and useful reasoning.
 
-Rules:
-- Answer only using the provided document context.
-- Do not invent facts.
+General rules:
+- Sound natural, helpful, and conversational — not robotic.
+- Use markdown with headings, short paragraphs, bullet points, and **bold** key terms.
+- Reference source numbers or page numbers when helpful.
+- Do not invent facts that are not supported by the document context.
 - Do not say "provided excerpts" or "as an expert".
-- Sound natural, helpful, and conversational.
-- If the answer is not supported by the document context, say clearly: "I couldn't find that information in the selected document(s)."
-- For summaries, identify the document type, main purpose, key themes, important facts, and takeaways.
-- For resumes, summarize profile, education, experience, projects, technical skills, strengths, and possible improvements if asked.
-- For study questions, explain clearly and break down concepts.
-- For comparisons, use a table when helpful.
-- Use markdown formatting with headings, bullets, and bold key terms.
-- Include citations using the source numbers or page numbers from the context."""
+- Citation cards are added separately; still mention sources when useful."""
 
-INTENT_INSTRUCTIONS: dict[QuestionIntent, str] = {
-    QuestionIntent.SUMMARY: (
-        "The user wants a broad overview. Identify the document type and give a structured summary "
-        "with key themes, important facts, and takeaways."
+MODE_INSTRUCTIONS: dict[AnswerMode, str] = {
+    AnswerMode.FACTUAL: (
+        "Answer mode: factual lookup.\n"
+        "Answer only if the document context supports the specific fact requested.\n"
+        "If the exact fact is missing, say clearly: "
+        '"I couldn\'t find that information in the selected document(s)."\n'
+        "Be direct and concise."
     ),
-    QuestionIntent.RESUME_REVIEW: (
-        "The user is asking about a resume/CV. Cover profile, education, experience, projects, "
-        "technical skills, achievements, and strengths when available."
+    AnswerMode.SUMMARY: (
+        "Answer mode: document summary.\n"
+        "Use the retrieved passages to produce a useful document-level summary.\n"
+        "Identify the document type, main purpose, key themes, important facts, and takeaways.\n"
+        "You do not need one exact sentence match — synthesize across the passages.\n"
+        "For resumes/CVs, cover profile, education, experience, projects, skills, and achievements."
     ),
-    QuestionIntent.STUDY_HELP: (
-        "The user wants study help. Explain clearly, break concepts down, and highlight the most "
-        "important points to remember."
+    AnswerMode.ANALYSIS: (
+        "Answer mode: analysis and advice.\n"
+        "Use the document as your evidence base.\n"
+        "You may offer reasonable recommendations, strengths, weaknesses, and improvements based on "
+        "what the document shows.\n"
+        "Phrase advice clearly, e.g. 'Based on this document...', 'One improvement could be...', "
+        "'Your resume shows strength in...'.\n"
+        "Do not invent credentials, employers, dates, or achievements that are not in the document.\n"
+        "Example: for 'How can I improve my skills?' on a resume, highlight existing strengths and "
+        "suggest credible next steps grounded in what is already shown."
     ),
-    QuestionIntent.EXPLANATION: (
-        "The user wants an explanation. Define the concept, explain how it works, and use examples "
-        "from the document when available."
-    ),
-    QuestionIntent.COMPARISON: (
-        "The user wants a comparison. Compare the relevant items clearly; use a markdown table if helpful."
-    ),
-    QuestionIntent.SPECIFIC_FACT: (
-        "The user asked a specific factual question. Answer directly first, then add supporting "
-        "detail from the document."
-    ),
-    QuestionIntent.GENERAL_QUESTION: (
-        "Answer the user's question directly using the document context."
+    AnswerMode.STUDY_HELP: (
+        "Answer mode: study help.\n"
+        "Explain concepts clearly, break ideas down, and highlight the most important points.\n"
+        "Create useful notes, identify key concepts, and help the user learn from the document.\n"
+        "Use examples from the document when available."
     ),
 }
 
@@ -68,7 +72,7 @@ INTENT_INSTRUCTIONS: dict[QuestionIntent, str] = {
 class RAGPipelineResult:
     answer: str
     citations: list[dict]
-    intent: QuestionIntent
+    answer_mode: AnswerMode
     rewritten_queries: list[str]
     candidate_count: int
     reranked_count: int
@@ -77,6 +81,7 @@ class RAGPipelineResult:
     fallback_used: bool
     fallback_reason: str | None
     citations_returned: bool
+    fallback_retrieval_used: bool
 
 
 def make_snippet(content: str, max_length: int = SNIPPET_MAX_LENGTH) -> str:
@@ -104,10 +109,10 @@ def build_chat_messages(
     question: str,
     chunks: list[RetrievalResult],
     history: list[tuple[str, str]],
-    intent: QuestionIntent,
+    answer_mode: AnswerMode,
 ) -> list[dict[str, str]]:
     context = build_context_block(chunks)
-    intent_instruction = INTENT_INSTRUCTIONS[intent]
+    mode_instruction = MODE_INSTRUCTIONS[answer_mode]
 
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -118,12 +123,10 @@ def build_chat_messages(
         {
             "role": "user",
             "content": (
-                f"{intent_instruction}\n\n"
+                f"{mode_instruction}\n\n"
                 "Document context:\n"
                 f"{context}\n\n"
-                f"User question: {question}\n\n"
-                "Answer using only the document context above. Reference source numbers or page "
-                "numbers when helpful."
+                f"User question: {question}"
             ),
         }
     )
@@ -154,42 +157,74 @@ def _answer_references_sources(answer: str) -> bool:
     return any(re.search(pattern, answer, re.IGNORECASE) for pattern in patterns)
 
 
-def _answer_claims_unsupported_facts(answer: str) -> bool:
-    unsupported_markers = (
+def _llm_claims_not_found(answer: str) -> bool:
+    normalized = answer.lower()
+    markers = (
         "i couldn't find",
         "could not find",
         "not found in the selected document",
-        "no information",
-        "don't have enough",
-        "do not have enough",
+        "no information in the selected document",
     )
-    normalized = answer.lower()
-    return not any(marker in normalized for marker in unsupported_markers)
+    return any(marker in normalized for marker in markers)
 
 
 def verify_answer(
     answer: str,
     chunks: list[RetrievalResult],
+    answer_mode: AnswerMode,
 ) -> str:
     if not chunks:
-        return NOT_FOUND_ANSWER
-
-    best_score = max(chunk.score for chunk in chunks)
-    if best_score < MIN_RELEVANCE_SCORE:
         return NOT_FOUND_ANSWER
 
     if not answer.strip():
         return NOT_FOUND_ANSWER
 
     normalized = answer.lower()
-    if _answer_claims_unsupported_facts(answer) and best_score < 0.35:
-        return NOT_FOUND_ANSWER
-
     if "provided excerpt" in normalized or "as an expert" in normalized:
         answer = re.sub(r"(?i)provided excerpts?", "the document", answer)
         answer = re.sub(r"(?i)as an expert,?\s*", "", answer)
 
+    if requires_strict_evidence(answer_mode):
+        best_score = max(chunk.score for chunk in chunks)
+        if best_score < FACTUAL_MIN_RELEVANCE_SCORE and _llm_claims_not_found(answer):
+            return NOT_FOUND_ANSWER
+        if best_score < FACTUAL_MIN_RELEVANCE_SCORE and not _llm_claims_not_found(answer):
+            return answer.strip()
+
     return answer.strip()
+
+
+def _log_retrieval_debug(
+    *,
+    conversation_id: str | None,
+    document_ids: list,
+    question: str,
+    answer_mode: AnswerMode,
+    retrieval,
+) -> None:
+    top_chunks = [
+        {
+            "chunk_id": str(chunk.chunk_id),
+            "document_id": str(chunk.document_id),
+            "page_number": chunk.page_number,
+            "score": round(chunk.score, 4),
+            "snippet": make_snippet(chunk.content, 80),
+        }
+        for chunk in retrieval.chunks[:5]
+    ]
+
+    logger.info(
+        "RAG debug: conversation_id=%s document_ids=%s question=%r answer_mode=%s "
+        "chunks_found=%s chunks_with_embeddings=%s top_chunks=%s fallback_retrieval=%s",
+        conversation_id,
+        [str(doc_id) for doc_id in document_ids],
+        question,
+        answer_mode.value,
+        retrieval.chunk_stats.total_chunks,
+        retrieval.chunk_stats.chunks_with_embeddings,
+        top_chunks,
+        retrieval.fallback_retrieval_used,
+    )
 
 
 class ChatGenerationError(Exception):
@@ -202,27 +237,27 @@ def run_rag_pipeline(
     history: list[tuple[str, str]],
     db: Session,
     model_mode: str | None = None,
+    conversation_id: str | None = None,
 ) -> RAGPipelineResult:
     resolved_mode = resolve_model_mode(model_mode)
-    intent = detect_intent(question)
-    retrieval = retrieve_and_rerank(document_ids, question, intent, db)
+    answer_mode = detect_answer_mode(question)
+    retrieval = retrieve_and_rerank(document_ids, question, answer_mode, db)
     chunks = retrieval.chunks
 
-    logger.info(
-        "RAG retrieval: intent=%s queries=%s candidates=%s reranked=%s document_ids=%s",
-        intent.value,
-        retrieval.rewritten_queries,
-        retrieval.candidate_count,
-        retrieval.reranked_count,
-        [str(doc_id) for doc_id in document_ids],
+    _log_retrieval_debug(
+        conversation_id=conversation_id,
+        document_ids=document_ids,
+        question=question,
+        answer_mode=answer_mode,
+        retrieval=retrieval,
     )
 
     if not chunks:
-        logger.info("RAG pipeline: no chunks retrieved, returning not-found answer")
+        logger.info("RAG pipeline: no chunks available for selected documents")
         return RAGPipelineResult(
             answer=NOT_FOUND_ANSWER,
             citations=[],
-            intent=intent,
+            answer_mode=answer_mode,
             rewritten_queries=retrieval.rewritten_queries,
             candidate_count=retrieval.candidate_count,
             reranked_count=0,
@@ -231,29 +266,18 @@ def run_rag_pipeline(
             fallback_used=False,
             fallback_reason=None,
             citations_returned=False,
+            fallback_retrieval_used=retrieval.fallback_retrieval_used,
         )
 
-    best_score = max(chunk.score for chunk in chunks)
-    if best_score < MIN_RELEVANCE_SCORE:
-        logger.info(
-            "RAG pipeline: low relevance (best_score=%.3f), returning not-found answer",
-            best_score,
-        )
-        return RAGPipelineResult(
-            answer=NOT_FOUND_ANSWER,
-            citations=[],
-            intent=intent,
-            rewritten_queries=retrieval.rewritten_queries,
-            candidate_count=retrieval.candidate_count,
-            reranked_count=retrieval.reranked_count,
-            model_mode=resolved_mode.value,
-            model_used=None,
-            fallback_used=False,
-            fallback_reason=None,
-            citations_returned=False,
-        )
+    if requires_strict_evidence(answer_mode):
+        best_score = max(chunk.score for chunk in chunks)
+        if best_score < FACTUAL_MIN_RELEVANCE_SCORE:
+            logger.info(
+                "RAG pipeline: factual question with low relevance (best_score=%.3f)",
+                best_score,
+            )
 
-    messages = build_chat_messages(question, chunks, history, intent)
+    messages = build_chat_messages(question, chunks, history, answer_mode)
 
     try:
         completion = generate_chat_completion(messages, model_mode=resolved_mode.value)
@@ -262,32 +286,34 @@ def run_rag_pipeline(
     except LLMError as exc:
         raise ChatGenerationError(str(exc)) from exc
 
-    answer = verify_answer(completion.content, chunks)
+    answer = verify_answer(completion.content, chunks, answer_mode)
     citations = chunks_to_citations(chunks)
 
-    if answer == NOT_FOUND_ANSWER:
+    if answer == NOT_FOUND_ANSWER and requires_strict_evidence(answer_mode):
         citations = []
 
     citations_returned = len(citations) > 0
     if citations_returned and not _answer_references_sources(answer):
         logger.info(
-            "RAG pipeline: answer lacks inline source refs; attaching %s citation cards",
+            "RAG pipeline: attaching %s citation cards",
             len(citations),
         )
 
     logger.info(
-        "RAG pipeline complete: model_mode=%s model_used=%s fallback=%s citations_returned=%s intent=%s",
+        "RAG pipeline complete: conversation_id=%s answer_mode=%s model_mode=%s "
+        "model_used=%s fallback=%s citations_returned=%s",
+        conversation_id,
+        answer_mode.value,
         completion.model_mode.value,
         completion.model_used,
         completion.fallback_used,
         citations_returned,
-        intent.value,
     )
 
     return RAGPipelineResult(
         answer=answer,
         citations=citations,
-        intent=intent,
+        answer_mode=answer_mode,
         rewritten_queries=retrieval.rewritten_queries,
         candidate_count=retrieval.candidate_count,
         reranked_count=retrieval.reranked_count,
@@ -296,4 +322,5 @@ def run_rag_pipeline(
         fallback_used=completion.fallback_used,
         fallback_reason=completion.fallback_reason,
         citations_returned=citations_returned,
+        fallback_retrieval_used=retrieval.fallback_retrieval_used,
     )
