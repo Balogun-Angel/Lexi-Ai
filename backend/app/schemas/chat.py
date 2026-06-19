@@ -1,3 +1,5 @@
+from typing import Literal
+
 import uuid
 from datetime import datetime
 
@@ -7,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class CitationResponse(BaseModel):
     chunk_id: uuid.UUID
     document_id: uuid.UUID
-    document_name: str
+    document_filename: str
     page_number: int
     snippet: str
     score: float
@@ -27,6 +29,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     document_ids: list[uuid.UUID] | None = None
     session_id: uuid.UUID | None = None
+    model_mode: Literal["fast", "smart"] | None = None
 
     @model_validator(mode="after")
     def validate_session_or_documents(self) -> "ChatRequest":
@@ -41,3 +44,7 @@ class ChatResponse(BaseModel):
     session_id: uuid.UUID
     user_message: ChatMessageResponse
     assistant_message: ChatMessageResponse
+    model_mode: Literal["fast", "smart"]
+    model_used: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None

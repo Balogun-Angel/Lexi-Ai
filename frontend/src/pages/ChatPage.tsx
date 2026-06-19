@@ -4,12 +4,19 @@ import { MessageSquare, Sparkles } from 'lucide-react'
 import { ChatLayout } from '../components/chat/ChatLayout'
 import { ChatBubble } from '../components/chat/ChatBubble'
 import { ChatInput } from '../components/chat/ChatInput'
+import { ChatModelModeHint, ChatModelSelector } from '../components/chat/ChatModelSelector'
 import { CitationCard } from '../components/chat/CitationCard'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { mapChatMessage, sendChatMessage } from '../api/chat'
 import { promptSuggestions } from '../data/mockData'
 import { useChat } from '../context/ChatContext'
+import {
+  loadModelMode,
+  saveModelMode,
+  SMART_MODE_RATE_LIMIT_MESSAGE,
+  type ModelMode,
+} from '../lib/modelMode'
 
 export function ChatPage() {
   const [searchParams] = useSearchParams()
@@ -18,6 +25,8 @@ export function ChatPage() {
   const [activeCitationId, setActiveCitationId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [modelMode, setModelMode] = useState<ModelMode>(() => loadModelMode())
 
   useEffect(() => {
     if (sessionParam) {
@@ -51,16 +60,22 @@ export function ChatPage() {
     }
   }, [latestCitations])
 
+  function handleModelModeChange(mode: ModelMode) {
+    setModelMode(mode)
+    saveModelMode(mode)
+  }
+
   async function handleSend(message: string) {
     if (!session) return
 
     setIsLoading(true)
     setError(null)
+    setNotice(null)
 
     try {
       const payload = session.backendSessionId
-        ? { message, session_id: session.backendSessionId }
-        : { message, document_ids: session.documentIds }
+        ? { message, session_id: session.backendSessionId, model_mode: modelMode }
+        : { message, document_ids: session.documentIds, model_mode: modelMode }
 
       const response = await sendChatMessage(payload)
       addMessages(
@@ -68,8 +83,24 @@ export function ChatPage() {
         [mapChatMessage(response.user_message), mapChatMessage(response.assistant_message)],
         response.session_id,
       )
+
+      if (response.fallback_used) {
+        setNotice(
+          response.fallback_reason ??
+            'Smart Mode was temporarily limited, so this answer used Fast Mode.',
+        )
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send message')
+      const messageText = err instanceof Error ? err.message : 'Failed to send message'
+      if (
+        modelMode === 'smart' &&
+        (messageText.includes('Smart Mode is temporarily limited') ||
+          messageText.toLowerCase().includes('rate limit'))
+      ) {
+        setError(SMART_MODE_RATE_LIMIT_MESSAGE)
+      } else {
+        setError(messageText)
+      }
     } finally {
       setIsLoading(false)
     }
@@ -101,6 +132,13 @@ export function ChatPage() {
       title={title}
       subtitle={
         session.documentTitles.length > 1 ? session.documentTitles.join(', ') : undefined
+      }
+      headerExtra={
+        <ChatModelSelector
+          value={modelMode}
+          onChange={handleModelModeChange}
+          disabled={isLoading}
+        />
       }
     >
       <div className="flex flex-1 overflow-hidden">
@@ -145,9 +183,16 @@ export function ChatPage() {
                 {error}
               </div>
             )}
+
+            {notice && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+                {notice}
+              </div>
+            )}
           </div>
 
-          <div className="border-t border-border p-4">
+          <div className="space-y-2 border-t border-border p-4">
+            <ChatModelModeHint mode={modelMode} />
             <ChatInput
               placeholder="Ask anything about the selected documents..."
               onSend={handleSend}

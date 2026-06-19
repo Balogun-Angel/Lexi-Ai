@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,13 +18,14 @@ from app.schemas.chat import (
     CitationResponse,
 )
 from app.services.embeddings import EmbeddingError
-from app.services.rag import ChatGenerationError, chunks_to_citations, generate_rag_answer_safe
-from app.services.retrieval import search_chunks_across_documents
+from app.services.llm import SmartModeRateLimitError
+from app.services.rag import ChatGenerationError, run_rag_pipeline
+from app.services.model_modes import resolve_model_mode
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 CHATABLE_STATUS = "processed"
-RETRIEVAL_LIMIT = 5
 
 
 def get_user_session(
@@ -74,10 +76,19 @@ def get_processed_documents(
     return documents
 
 
+def _normalize_citation(item: dict) -> dict:
+    if "document_filename" not in item and "document_name" in item:
+        item = {**item, "document_filename": item["document_name"]}
+    return item
+
+
 def message_to_response(message: ChatMessageModel) -> ChatMessageResponse:
     citations = None
     if message.citations:
-        citations = [CitationResponse(**item) for item in message.citations]
+        citations = [
+            CitationResponse(**_normalize_citation(dict(item)))
+            for item in message.citations
+        ]
 
     return ChatMessageResponse(
         id=message.id,
@@ -116,19 +127,6 @@ def chat(
         if message.role in {"user", "assistant"}
     ]
 
-    try:
-        retrieved_chunks = search_chunks_across_documents(
-            document_ids,
-            payload.message,
-            db,
-            limit=RETRIEVAL_LIMIT,
-        )
-    except EmbeddingError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-
     user_message = ChatMessageModel(
         session_id=session.id,
         role="user",
@@ -140,8 +138,28 @@ def chat(
     if session.title is None:
         session.title = payload.message[:255]
 
+    model_mode = resolve_model_mode(payload.model_mode).value
+
     try:
-        answer = generate_rag_answer_safe(payload.message, retrieved_chunks, history)
+        rag_result = run_rag_pipeline(
+            payload.message,
+            document_ids,
+            history,
+            db,
+            model_mode=model_mode,
+        )
+    except EmbeddingError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except SmartModeRateLimitError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except ChatGenerationError as exc:
         db.rollback()
         raise HTTPException(
@@ -149,12 +167,11 @@ def chat(
             detail=str(exc),
         ) from exc
 
-    citation_payload = chunks_to_citations(retrieved_chunks)
     assistant_message = ChatMessageModel(
         session_id=session.id,
         role="assistant",
-        content=answer,
-        citations=citation_payload,
+        content=rag_result.answer,
+        citations=rag_result.citations or None,
     )
     db.add(assistant_message)
     db.commit()
@@ -162,8 +179,22 @@ def chat(
     db.refresh(assistant_message)
     db.refresh(session)
 
+    logger.info(
+        "Chat response: session_id=%s intent=%s model_mode=%s model_used=%s fallback=%s citations_returned=%s",
+        session.id,
+        rag_result.intent.value,
+        rag_result.model_mode,
+        rag_result.model_used,
+        rag_result.fallback_used,
+        rag_result.citations_returned,
+    )
+
     return ChatResponse(
         session_id=session.id,
         user_message=message_to_response(user_message),
         assistant_message=message_to_response(assistant_message),
+        model_mode=rag_result.model_mode,  # type: ignore[arg-type]
+        model_used=rag_result.model_used,
+        fallback_used=rag_result.fallback_used,
+        fallback_reason=rag_result.fallback_reason,
     )
