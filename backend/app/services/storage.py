@@ -53,7 +53,12 @@ async def save_pdf_upload(file: UploadFile, original_filename: str) -> tuple[str
     return stored_filename, relative_path
 
 
+def get_pdf_absolute_path(file_path: str) -> Path:
+    """Return the absolute path for a stored document file_path value."""
+    return settings.upload_path / Path(file_path).name
+
+
 def delete_pdf_file(file_path: str) -> None:
-    absolute_path = settings.upload_path / Path(file_path).name
+    absolute_path = get_pdf_absolute_path(file_path)
     if absolute_path.exists():
         absolute_path.unlink()

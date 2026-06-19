@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Badge } from '../ui/Badge'
-import type { DocumentDisplay, DocumentStatus } from '../../types/document'
+import type { DocumentDisplay } from '../../types/document'
+import { canChatWithDocument, canProcessDocument } from '../../lib/documents'
 import { cn } from '../../lib/utils'
 
 interface DocumentCardProps {
@@ -13,22 +14,14 @@ interface DocumentCardProps {
   isProcessing?: boolean
 }
 
-function canProcess(status: DocumentStatus): boolean {
-  return status === 'uploaded' || status === 'failed'
-}
-
-function canOpen(status: DocumentStatus): boolean {
-  return status === 'ready' || status === 'processed'
-}
-
 export function DocumentCard({
   document,
   className,
   onProcess,
   isProcessing = false,
 }: DocumentCardProps) {
-  const showProcess = canProcess(document.status)
-  const showOpen = canOpen(document.status)
+  const showProcess = canProcessDocument(document.status)
+  const showAskAi = canChatWithDocument(document.status)
 
   return (
     <Card padding="sm" className={cn('flex flex-col', className)}>
@@ -50,6 +43,20 @@ export function DocumentCard({
       </div>
 
       <div className="mt-auto space-y-2">
+        <Link to={`/documents/${document.id}`}>
+          <Button fullWidth size="sm" variant="primary">
+            Open
+          </Button>
+        </Link>
+
+        {showAskAi && (
+          <Link to={`/chat/new?documentId=${document.id}`}>
+            <Button fullWidth size="sm" variant="outline">
+              Ask AI
+            </Button>
+          </Link>
+        )}
+
         {showProcess && onProcess && (
           <Button
             fullWidth
@@ -58,16 +65,8 @@ export function DocumentCard({
             disabled={isProcessing}
             onClick={() => onProcess(document.id)}
           >
-            {isProcessing ? 'Processing...' : 'Process'}
+            {isProcessing ? 'Processing...' : document.status === 'processed' ? 'Reprocess' : 'Process'}
           </Button>
-        )}
-
-        {showOpen && (
-          <Link to="/chat">
-            <Button fullWidth size="sm" variant="primary">
-              Open
-            </Button>
-          </Link>
         )}
 
         {document.status === 'processing' && (

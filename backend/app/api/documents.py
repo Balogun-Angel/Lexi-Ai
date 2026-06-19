@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,10 +14,19 @@ from app.schemas.document import (
     DocumentChunkListResponse,
     DocumentChunkResponse,
     DocumentResponse,
+    DocumentSearchResponse,
     ProcessAllResponse,
+    SearchChunkResult,
 )
+from app.services.embeddings import EmbeddingError
 from app.services.processing import DocumentNotFoundError, process_document_by_id
-from app.services.storage import delete_pdf_file, save_pdf_upload, validate_pdf_upload
+from app.services.retrieval import search_document_chunks
+from app.services.storage import (
+    delete_pdf_file,
+    get_pdf_absolute_path,
+    save_pdf_upload,
+    validate_pdf_upload,
+)
 
 REPROCESSABLE_STATUSES = ("uploaded", "failed")
 
@@ -105,6 +115,65 @@ def list_documents(
         .order_by(Document.created_at.desc())
     ).all()
     return [DocumentResponse.model_validate(doc) for doc in documents]
+
+
+@router.get("/{document_id}/file")
+def get_document_file(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    document = get_user_document(document_id, current_user, db)
+    absolute_path = get_pdf_absolute_path(document.file_path)
+
+    if not absolute_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF file not found on disk",
+        )
+
+    return FileResponse(
+        path=absolute_path,
+        media_type="application/pdf",
+        filename=document.original_filename,
+    )
+
+
+@router.get("/{document_id}/search", response_model=DocumentSearchResponse)
+def search_document(
+    document_id: uuid.UUID,
+    query: str = Query(..., min_length=1, max_length=2000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DocumentSearchResponse:
+    document = get_user_document(document_id, current_user, db)
+
+    if document.status != "processed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Document must be processed before searching",
+        )
+
+    try:
+        results = search_document_chunks(document.id, query, db, limit=5)
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return DocumentSearchResponse(
+        document_id=document.id,
+        query=query,
+        results=[
+            SearchChunkResult(
+                content=result.content,
+                page_number=result.page_number,
+                score=result.score,
+            )
+            for result in results
+        ],
+    )
 
 
 @router.get("/{document_id}/chunks", response_model=DocumentChunkListResponse)
