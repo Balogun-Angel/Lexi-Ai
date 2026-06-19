@@ -1,50 +1,70 @@
-import { Image, Paperclip, Send } from 'lucide-react'
+import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Loader2, Send } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/utils'
 
 interface ChatInputProps {
   placeholder?: string
   className?: string
+  onSend: (message: string) => void
+  disabled?: boolean
+  isLoading?: boolean
 }
 
 export function ChatInput({
   placeholder = 'Ask anything about this document...',
   className,
+  onSend,
+  disabled = false,
+  isLoading = false,
 }: ChatInputProps) {
+  const [value, setValue] = useState('')
+
+  function submitMessage() {
+    const trimmed = value.trim()
+    if (!trimmed || disabled || isLoading) return
+    onSend(trimmed)
+    setValue('')
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    submitMessage()
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      submitMessage()
+    }
+  }
+
   return (
-    <div
+    <form
+      onSubmit={handleSubmit}
       className={cn(
         'flex items-end gap-3 rounded-2xl border border-border bg-surface-card p-3',
         className,
       )}
     >
-      <div className="flex gap-2 pb-1">
-        <button
-          type="button"
-          className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
-          aria-label="Upload image"
-        >
-          <Image className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-hover hover:text-text-secondary"
-          aria-label="Attach file"
-        >
-          <Paperclip className="h-4 w-4" />
-        </button>
-      </div>
-
       <textarea
         rows={1}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        className="max-h-32 min-h-[40px] flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+        disabled={disabled || isLoading}
+        className="max-h-32 min-h-[40px] flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-60"
       />
 
-      <Button size="sm" className="shrink-0">
-        <Send className="mr-1.5 h-3.5 w-3.5" />
+      <Button type="submit" size="sm" className="shrink-0" disabled={disabled || isLoading || !value.trim()}>
+        {isLoading ? (
+          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Send className="mr-1.5 h-3.5 w-3.5" />
+        )}
         Send
       </Button>
-    </div>
+    </form>
   )
 }

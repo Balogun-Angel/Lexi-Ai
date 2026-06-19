@@ -15,8 +15,7 @@ def _get_client() -> Groq:
 
 def generate_chat_completion(messages: list[dict[str, str]]) -> str:
     """
-    Generate a chat response via Groq.
-    Used by POST /chat (to be added in a later phase).
+    Generate a chat response via Groq for RAG answers.
     """
     try:
         client = _get_client()

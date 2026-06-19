@@ -5,10 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 
 from app.api.auth import router as auth_router
+from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.config import settings
 from app.database import Base, engine, ensure_pgvector_extension
-from app.models import Document, DocumentChunk, User  # noqa: F401
+from app.models import ChatMessage, ChatSession, Document, DocumentChunk, User  # noqa: F401
 
 
 def ensure_document_schema() -> None:
@@ -103,6 +104,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(documents_router, prefix="/documents", tags=["documents"])
+app.include_router(chat_router, prefix="/chat", tags=["chat"])
 
 
 @app.get("/health")
